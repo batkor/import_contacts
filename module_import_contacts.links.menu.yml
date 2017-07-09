@@ -1,0 +1,5 @@
+module_import_contacts.admin_settings:
+  title: 'Import contact'
+  description: 'Import contacts'
+  route_name: module_import_contacts.admin_settings
+  parent: 'system.admin_config_development'

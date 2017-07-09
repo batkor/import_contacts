@@ -1,0 +1,270 @@
+<?php
+
+use Drupal\Component\Serialization\Json;
+use Drupal\file\Entity\File;
+use Drupal\node\Entity\Node;
+use Drupal\taxonomy\Entity\Term;
+use Drupal\module_import_contacts\BatchContactImport;
+
+/**
+ * Implements hook_cron().
+ */
+function module_import_contacts_cron() {
+  $config = \Drupal::getContainer()->get('config.factory')
+    ->getEditable('module_import_contacts.import');
+  module_import_contacts_import_uslugi($config->get('url_uslugi'));
+  module_import_contacts_import_udobstva($config->get('url_udobstva'));
+  module_import_contacts_import_contacts($config->get('url_contacts'));
+
+}
+
+function module_import_contacts_import_uslugi($url) {
+  $response = \Drupal::httpClient()
+    ->get($url, array('headers' => array('Accept' => 'application/json')));
+  $data = (string) $response->getBody();
+  $decoded_data = Json::decode($data);
+  foreach ($decoded_data as $decoded_datum) {
+    if (!empty($decoded_datum['parent'])) {
+      $parent_term = [];
+      $term = [];
+      $parent_terms = taxonomy_term_load_multiple_by_name($decoded_datum['parent']);
+      if (empty($parent_terms)) {
+        $parent_term = Term::create([
+          'name' => $decoded_datum['parent'],
+          'vid'  => 'uslugi',
+        ]);
+        $parent_term->save();
+      }
+      else {
+        foreach ($parent_terms as $parent) {
+          if ($parent->getVocabularyId() == 'uslugi') {
+            $parent_term = $parent;
+            break;
+          }
+        }
+      }
+      if (empty($parent_term)) {
+        $parent_term = Term::create([
+          'name' => $decoded_datum['parent'],
+          'vid'  => 'uslugi',
+        ]);
+        $parent_term->save();
+      }
+      //Получаем категорию
+      $terms = taxonomy_term_load_multiple_by_name($decoded_datum['name']);
+      //Проверяем есть ли такой термин
+      if (empty($terms)) {
+        $term = Term::create([
+          'name'   => $decoded_datum['name'],
+          'vid'    => 'uslugi',
+          'parent' => array($parent_term->get('tid')->value),
+        ]);
+        $term->save();
+      }
+      else {
+        foreach ($terms as $terms_item) {
+          if ($terms_item->getVocabularyId() == 'uslugi') {
+            $term = $terms_item;
+            $term->parent = array($parent_term->get('tid')->value);
+            $term->save();
+            break;
+          }
+        }
+        if (empty($term)) {
+          $term = Term::create([
+            'name'   => $decoded_datum['name'],
+            'vid'    => 'uslugi',
+            'parent' => array($parent_term->get('tid')->value),
+          ]);
+          $term->save();
+        }
+      }
+    }
+  }
+}
+
+function module_import_contacts_import_udobstva($url) {
+  $response = \Drupal::httpClient()
+    ->get($url, array('headers' => array('Accept' => 'application/json')));
+  $data = (string) $response->getBody();
+  $decoded_data = Json::decode($data);
+  foreach ($decoded_data as $decoded_datum) {
+    $term = [];
+    //Получаем категорию
+    $terms = taxonomy_term_load_multiple_by_name($decoded_datum['name']);
+    //Проверяем есть ли такой термин
+    if (empty($terms)) {
+      $term = Term::create([
+        'name' => $decoded_datum['name'],
+        'vid'  => 'udobstva',
+      ]);
+
+      $term->save();
+    }
+    else {
+      foreach ($terms as $terms_item) {
+        if ($terms_item->getVocabularyId() == 'udobstva') {
+          $term = $terms_item;
+          $term->name = $decoded_datum['name'];
+
+          if (!empty($decoded_datum['field_svg_icon_udobstva'])) {
+            //get src attr from img
+            preg_match_all('/<img[^>]+src="?\'?([^"\']+)"?\'?[^>]*>/i', $decoded_datum['field_svg_icon_udobstva'], $path_parse, PREG_SET_ORDER);
+            $path_parse = substr($path_parse[0][1], 0, -1);
+            $path_parse = str_replace(' ', '', $path_parse);
+            $img_path = 'http://autoservice-alfaromeo.ru' . $path_parse;
+            $data_file = system_retrieve_file($img_path, NULL, TRUE, FILE_EXISTS_REPLACE);
+            if ($data_file) {
+              $term->field_svg_icon_udobstva = $data_file->id();
+            }
+          }
+
+          $term->save();
+          break;
+        }
+      }
+      if (empty($term)) {
+        $term = Term::create([
+          'name' => $decoded_datum['name'],
+          'vid'  => 'udobstva',
+        ]);
+        $term->save();
+      }
+    }
+  }
+}
+
+function module_import_contacts_import_contacts($url) {
+  $queue = \Drupal::queue('module_import_contacts_import_contacts');
+  $response = \Drupal::httpClient()
+    ->get($url, array('headers' => array('Accept' => 'application/json')));
+  $data = (string) $response->getBody();
+  $decoded_data = Json::decode($data);
+
+  $config = \Drupal::getContainer()->get('config.factory')
+    ->getEditable('module_import_contacts.import');
+  $id_mass = $config->get('ids_importing', []);
+  foreach ($decoded_data as $decoded_datum) {
+    # Добавляем данные в очередь
+    $queue->createItem([
+      'decoded_data' => $decoded_datum,
+    ]);
+  }
+
+  $queue->createQueue();
+
+
+  while ($item = $queue->claimItem()) {
+    if (empty($id_mass)) {
+      $node = Node::create(array(
+        'type'     => 'kontakty',
+        'langcode' => 'ru',
+        'uid'      => 1,
+        'status'   => 1,
+      ));
+    }
+    else {
+      $node = Node::load($id_mass[$item->data['decoded_data']['nid']]);
+      if (is_null($node)) {
+        $node = Node::create(array(
+          'type'     => 'kontakty',
+          'langcode' => 'ru',
+          'uid'      => 1,
+          'status'   => 1,
+        ));
+      }
+    }
+    $node->title = $item->data['decoded_data']['title'];
+    $node->field_url = $item->data['decoded_data']['field_url'];
+    $node->field_adres = $item->data['decoded_data']['field_adres'];
+    $node->field_kontaktnoe_lico = $item->data['decoded_data']['field_kontaktnoe_lico'];
+    $node->field_koordinaty = $item->data['decoded_data']['field_koordinaty'];
+    $node->field_dolznost = $item->data['decoded_data']['field_dolznost'];
+    $node->field_koordinaty_geometki = $item->data['decoded_data']['field_koordinaty_geometki'];
+    $node->body = [
+      'value'  => $item->data['decoded_data']['body'],
+      'format' => 'full_html',
+    ];
+    $node->field_telefon = $item->data['decoded_data']['field_telefon'];
+    $node->field_casy_raboty = $item->data['decoded_data']['field_casy_raboty'];
+
+    //Set value usluga field
+    $udobstva_s = explode("|", $item->data['decoded_data']['field_udobstva']);
+    $term_ids = [];
+    foreach ($udobstva_s as $udobstva) {
+      $terms_gets = taxonomy_term_load_multiple_by_name($udobstva);
+      foreach ($terms_gets as $term_get) {
+        if ($term_get->getVocabularyId() == 'udobstva') {
+          $term_ids[] = $term_get->get('tid')->value;
+        }
+      }
+    }
+    $node->field_udobstva = $term_ids;
+
+    $uslugi_s = explode("|", $item->data['decoded_data']['field_uslugi']);
+    $term_ids = [];
+    foreach ($uslugi_s as $uslugi) {
+      $terms_gets = taxonomy_term_load_multiple_by_name($uslugi);
+      foreach ($terms_gets as $term_get) {
+        if ($term_get->getVocabularyId() == 'uslugi') {
+          $term_ids[] = $term_get->get('tid')->value;
+        }
+      }
+    }
+    $node->field_uslugi = $term_ids;
+
+    //Загружаем изображения и привязываем к ноде
+    $productImg = $item->data['decoded_data']['field_izobrazenia'];
+    $files_imgs = array();
+    if (!empty($productImg)) {
+      $images = explode("|", $productImg);
+      foreach ($images as $image) {
+        $img_path = 'http://autoservice-alfaromeo.ru' . $image;
+        $data_file = system_retrieve_file($img_path, NULL, TRUE, FILE_EXISTS_REPLACE);
+        if ($data_file) {
+          $files_imgs[] = array('target_id' => $data_file->id());
+        }
+      }
+      $node->field_izobrazenia = $files_imgs;
+    }
+
+    //Загружаем изображения и привязываем к ноде
+    $productImg = $item->data['decoded_data']['field_foto'];
+    $files_imgs = array();
+    if (!empty($productImg)) {
+      $images = explode("|", $productImg);
+      foreach ($images as $image) {
+        $img_path = 'http://autoservice-alfaromeo.ru' . $image;
+        $data_file = system_retrieve_file($img_path, NULL, TRUE, FILE_EXISTS_REPLACE);
+        if ($data_file) {
+          $files_imgs[] = array('target_id' => $data_file->id());
+
+        }
+      }
+      $node->field_foto = $files_imgs;
+    }
+
+    $productImg = $item->data['decoded_data']['field_geometka'];
+    $files_imgs = array();
+    if (!empty($productImg)) {
+      $images = explode("|", $productImg);
+      foreach ($images as $image) {
+        $img_path = 'http://autoservice-alfaromeo.ru' . $image;
+        $data_file = system_retrieve_file($img_path, NULL, TRUE, FILE_EXISTS_REPLACE);
+        if ($data_file) {
+          $files_imgs[] = array('target_id' => $data_file->id());
+
+        }
+      }
+      $node->field_geometka = $files_imgs;
+    }
+
+    $node->save();
+    $id_mass[$item->data['decoded_data']['nid']] = $node->id();
+    $config->set('ids_importing', $id_mass);
+    $config->save();
+
+    //  # Удаляем его из очереди, так как материал создан.
+    $queue->deleteItem($item);
+  }
+}

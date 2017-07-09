@@ -1,0 +1,9 @@
+module_import_contacts.admin_settings:
+  path: '/admin/config/development/import_contacts'
+  defaults:
+    _form: '\Drupal\module_import_contacts\Form\ImportContactForm'
+    _title: 'Import Contacts'
+  requirements:
+    _permission: 'access administration pages'
+  options:
+    _admin_route: TRUE

@@ -1,0 +1,5 @@
+name: 'Import contact'
+description: 'Import contacts'
+type: module
+core: 8.x
+version: 1.x
