@@ -101,7 +101,7 @@ class BatchContactImport {
       $node->field_dolznost = $item['field_dolznost'];
       $node->field_koordinaty_geometki = $item['field_koordinaty_geometki'];
       $node->field_yandex = $item['field_yandex'];
-      $node->field_pokazat_na_karte = $item['field_pokazat_na_karte'];
+      $node->field_prioritet = $item['field_prioritet'];
       $node->body = [
         'value'  => $item['body'],
         'format' => 'full_html',

@@ -5,6 +5,7 @@ use Drupal\file\Entity\File;
 use Drupal\node\Entity\Node;
 use Drupal\taxonomy\Entity\Term;
 use Drupal\module_import_contacts\BatchContactImport;
+use \GuzzleHttp\Exception\RequestException;
 
 /**
  * Implements hook_cron().
@@ -135,14 +136,18 @@ function module_import_contacts_import_udobstva($url) {
 }
 
 function module_import_contacts_import_contacts($url) {
+  $config = \Drupal::getContainer()->get('config.factory')
+    ->getEditable('module_import_contacts.import');
   $queue = \Drupal::queue('module_import_contacts_import_contacts');
+  $url = $url . '?marka=' . $config->get('paramatr_marka');
   $response = \Drupal::httpClient()
-    ->get($url, array('headers' => array('Accept' => 'application/json')));
+    ->get($url, [
+      'headers' => ['Accept' => 'application/json'],
+      'auth'    => [$config->get('user_name'), $config->get('user_pass')],
+    ]);
   $data = (string) $response->getBody();
   $decoded_data = Json::decode($data);
 
-  $config = \Drupal::getContainer()->get('config.factory')
-    ->getEditable('module_import_contacts.import');
   $id_mass = $config->get('ids_importing', []);
   foreach ($decoded_data as $decoded_datum) {
     # Добавляем данные в очередь
@@ -181,6 +186,8 @@ function module_import_contacts_import_contacts($url) {
     $node->field_koordinaty = $item->data['decoded_data']['field_koordinaty'];
     $node->field_dolznost = $item->data['decoded_data']['field_dolznost'];
     $node->field_koordinaty_geometki = $item->data['decoded_data']['field_koordinaty_geometki'];
+    $node->field_yandex = $item->data['decoded_data']['field_yandex'];
+    $node->field_prioritet = $item->data['decoded_data']['field_prioritet'];
     $node->body = [
       'value'  => $item->data['decoded_data']['body'],
       'format' => 'full_html',
